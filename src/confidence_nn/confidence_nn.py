@@ -3,14 +3,14 @@ import torch.nn as nn
 import torch.optim as optim
 
 
-class CustomLinearLayer(nn.Module):
+class ConfidenceLinearLayer(nn.Module):
     def __init__(self, input_dim, output_dim, alpha=0.9, beta=0.1, gamma=0.1, delta=1.0, device='cpu'):
-        super(CustomLinearLayer, self).__init__()
+        super(ConfidenceLinearLayer, self).__init__()
         self.alpha = alpha  # Decay term for confidence
         self.beta = beta    # Influence of the frequency
         self.gamma = gamma  # Decay term for confidence update
         self.delta = delta  # Decay rate for frequency normalization
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu") # TODO: Centralize this
+        self.device = device
         self.init_parameters(input_dim, output_dim)
 
     def init_parameters(self, input_dim, output_dim):
@@ -54,11 +54,12 @@ class CustomLinearLayer(nn.Module):
         # print("Confidence shape:", self.confidence.shape, "Confidence values:", self.confidence)
 
 
-class CustomNet(nn.Module):
+class ConfidenceNet(nn.Module):
     def __init__(self):
-        super(CustomNet, self).__init__()
-        self.layer1 = CustomLinearLayer(2, 4)
-        self.layer2 = CustomLinearLayer(4, 1)
+        super(ConfidenceNet, self).__init__()
+        self.layer1 = ConfidenceLinearLayer(20, 40)
+        self.layer2 = ConfidenceLinearLayer(40, 1)
+        self.losses = []
 
     def forward(self, x):
         x = self.layer1(x)
@@ -66,24 +67,9 @@ class CustomNet(nn.Module):
         return x
 
 
-# For standard backpropagation -> TODO: Remove
-class StandardNet(nn.Module):
-    def __init__(self):
-        super(StandardNet, self).__init__()
-        self.layer1 = nn.Linear(2, 4)
-        self.layer2 = nn.Linear(4, 1)
-
-    def forward(self, x):
-        x = self.layer1(x)
-        x = self.layer2(x)
-        return x
-
-
-# TODO: Move to another file and remove custom_training (is just for testing).
-def train_model(model, data, labels, custom_training=False, epochs=100, lr=0.1):
+def train_confidence_model(model, data, labels, epochs=100, lr=0.1):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data, labels = data.to(device), labels.to(device)
-    losses = []
 
     criterion = nn.MSELoss()
     optimizer = optim.SGD(model.parameters(), lr=lr)
@@ -92,35 +78,10 @@ def train_model(model, data, labels, custom_training=False, epochs=100, lr=0.1):
         outputs = model(data)
         loss = criterion(outputs, labels)
         optimizer.zero_grad()
-        if custom_training:
-            loss.backward(retain_graph=True)  # Note the retain_graph=True
-            for layer in model.children():
-                layer.update_frequency_and_confidence(layer.weights.grad)
-                layer.custom_backward(layer.weights.grad, lr)
-        else:
-            loss.backward()
-            optimizer.step()
-        print(f"Epoch {epoch}, Loss: {loss.item()}")
-        losses.append(loss.item())
-    return losses
-
-
-if __name__ == "__main__":
-    data = torch.tensor([[0.0, 1.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]], dtype=torch.float32)
-    labels = torch.tensor([[1.0], [1.0], [0.0], [0.0]], dtype=torch.float32)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Training using CustomNet
-    print("Training using CustomNet:")
-    custom_model = CustomNet().to(device)
-    custom_losses = train_model(custom_model, data, labels, custom_training=True)
-
-    # Training using StandardNet
-    print("\nTraining using StandardNet:")
-    standard_model = StandardNet().to(device)
-    standard_losses = train_model(standard_model, data, labels)
-
-    # Comparing losses
-    print("\nComparing losses:")
-    for epoch, (custom_loss, standard_loss) in enumerate(zip(custom_losses, standard_losses)):
-        print(f"Epoch {epoch}, Custom Loss: {custom_loss}, Standard Loss: {standard_loss}")
+        loss.backward(retain_graph=True)  # Note the retain_graph=True
+        for layer in model.children():
+            layer.update_frequency_and_confidence(layer.weights.grad)
+            layer.custom_backward(layer.weights.grad, lr)
+        # print(f"Epoch {epoch}, Loss: {loss.item()}")
+        model.losses.append(loss.item())
+    return model.losses
